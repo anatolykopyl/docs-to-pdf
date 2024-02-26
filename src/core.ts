@@ -8,7 +8,7 @@ import * as utils from './utils';
 
 console_stamp(console);
 
-let contentHTML = '';
+let totalHTML = '';
 export interface GeneratePDFOptions {
   initialDocURLs: Array<string>;
   excludeURLs: Array<string>;
@@ -89,6 +89,7 @@ export async function generatePDF({
     } else request.continue();
   });
 
+  const documentBuffers = [];
   console.debug(`InitialDocURLs: ${initialDocURLs}`);
   for (const url of initialDocURLs) {
     let nextPageURL = url;
@@ -108,6 +109,9 @@ export async function generatePDF({
         await new Promise((r) => setTimeout(r, waitForRender));
       }
 
+      // Find next page url before DOM operations
+      nextPageURL = await utils.findNextUrl(page, paginationSelector);
+
       if (
         await utils.isPageKept(
           page,
@@ -124,12 +128,23 @@ export async function generatePDF({
           await utils.openDetails(page);
         }
         // Get the HTML string of the content section.
-        contentHTML += await utils.getHtmlContent(page, contentSelector);
+        const contentHTML = await utils.getHtmlContent(page, contentSelector);
+        const { modifiedContentHTML } = utils.generateToc(contentHTML);
+        totalHTML += contentHTML;
+        await page.setContent(modifiedContentHTML);
+        documentBuffers.push(
+          await page.pdf({
+            format: paperFormat,
+            printBackground: true,
+            margin: pdfMargin,
+            displayHeaderFooter: !!(headerTemplate || footerTemplate),
+            headerTemplate,
+            footerTemplate,
+            timeout: 0,
+          }),
+        );
         console.log(chalk.green('Success'));
       }
-
-      // Find next page url before DOM operations
-      nextPageURL = await utils.findNextUrl(page, paginationSelector);
     }
   }
 
@@ -152,7 +167,7 @@ export async function generatePDF({
   );
 
   // Generate Toc
-  const { modifiedContentHTML, tocHTML } = utils.generateToc(contentHTML);
+  const { modifiedContentHTML, tocHTML } = utils.generateToc(totalHTML);
 
   // Restructuring the HTML of a document
   console.log(chalk.cyan('Restructuring the html of a document...'));
@@ -181,25 +196,6 @@ export async function generatePDF({
     await page.addStyleTag({ content: cssStyle });
   }
 
-  // Scroll to the bottom of the page with puppeteer-autoscroll-down
-  // This forces lazy-loading images to load
-  console.log(chalk.cyan('Scroll to the bottom of the page...'));
-  await scrollPageToBottom(page, {}); //cast to puppeteer-core type
-
-  // Generate PDF
-  console.log(chalk.cyan('Generate PDF...'));
-  await page.pdf({
-    path: outputPDFFilename,
-    format: paperFormat,
-    printBackground: true,
-    margin: pdfMargin,
-    displayHeaderFooter: !!(headerTemplate || footerTemplate),
-    headerTemplate,
-    footerTemplate,
-    timeout: 0,
-  });
-
-  console.log(chalk.green(`PDF generated at ${outputPDFFilename}`));
   await browser.close();
   console.log(chalk.green('Browser closed'));
 
@@ -207,5 +203,12 @@ export async function generatePDF({
     fs.removeSync(chromeTmpDataDir);
   }
   console.debug(chalk.cyan('Chrome user data dir removed'));
+
+  // Concat PDFs
+  console.log(chalk.cyan('Concat PDFs...'));
+  const pdfBytes = await utils.mergePDFDocuments(documentBuffers);
+  await fs.writeFile(outputPDFFilename, pdfBytes);
+
+  console.log(chalk.green(`PDF generated at ${outputPDFFilename}`));
 }
 /* c8 ignore stop */

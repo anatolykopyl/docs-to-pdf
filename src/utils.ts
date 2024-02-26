@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import console_stamp from 'console-stamp';
 import * as puppeteer from 'puppeteer-core';
+import { PDFDocument } from 'pdf-lib';
 
 console_stamp(console);
 
@@ -253,7 +254,7 @@ export function generateToc(contentHtml: string, maxLevel = 4) {
     id: string;
   }> = [];
 
-  console.log(chalk.cyan('Start generating TOC...'));
+  console.debug(chalk.cyan('Generating TOC...'));
   // Create TOC only for h1~h${maxLevel}
   // Regex to match all header tags
   const re = new RegExp(
@@ -425,4 +426,20 @@ export async function isPageKept(
   }
 
   return true;
+}
+
+export async function mergePDFDocuments(documentBuffers: Buffer[]) {
+  const mergedPdf = await PDFDocument.create();
+
+  for (const documentBuffer of documentBuffers) {
+    const document = await PDFDocument.load(documentBuffer);
+
+    const copiedPages = await mergedPdf.copyPages(
+      document,
+      document.getPageIndices(),
+    );
+    copiedPages.forEach((page) => mergedPdf.addPage(page));
+  }
+
+  return mergedPdf.save();
 }
